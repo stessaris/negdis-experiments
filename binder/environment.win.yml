@@ -1,0 +1,10 @@
+name: negdis
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8.*
+  - ipykernel
+  - jupyterlab
+  - psutil
+  - clingo=5.4.0
+  - libxml2
