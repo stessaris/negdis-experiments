@@ -8,7 +8,7 @@
 
 CUSTOM_OUT = True
 
-HOLDS_PRED = 'holds'
+HOLDS_PRED = '${predicate_holds}'
 
 def main(ctl: 'clingo.Control'):
 
@@ -32,6 +32,6 @@ def main(ctl: 'clingo.Control'):
 
 #end.
 
-holds(C) :- choice(_, C).
+${predicate_holds}(C) :- ${predicate_choice}(_, C).
 
-#show holds/1.
+#show ${predicate_holds}/1.

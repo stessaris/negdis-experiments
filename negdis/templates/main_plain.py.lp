@@ -8,7 +8,7 @@ import json
 MAX_MODELS = 100
 CUSTOM_OUT = False
 
-SELECTED_PRED = 'selected'
+SELECTED_PRED = '${predicate_selected}'
 
 def main(ctl: 'clingo.Control'):
 

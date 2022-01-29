@@ -1,11 +1,13 @@
 name: negdis
 channels:
+  - potassco
   - conda-forge
 dependencies:
-  - python=3.8.*
+  - python
   - ipykernel
   - jupyterlab
   - psutil
-  - clingo=5.4.0
+  - asprin
+  - clingo=5.4
   - libxml2
   - time

@@ -10,7 +10,7 @@ import json
 MAX_MODELS = 100
 CUSTOM_OUT = False
 
-SELECTED_PRED = 'selected'
+SELECTED_PRED = '${predicate_selected}'
 
 def main(ctl: 'clingo.Control'):
 
@@ -40,5 +40,5 @@ def main(ctl: 'clingo.Control'):
 % compute models with the minimal cardinality for selected constraints
 %   to get more models use the `--opt-mode=optN` option with `-n`
 %   and `--quiet=1` to avoid printing of tentative models, also in the JSON output!!
-#minimize{1@2,C: holds(C)}.
-#minimize{1@1,C: selected(C)}.
+#minimize{1@2,C: ${predicate_holds}(C)}.
+#minimize{1@1,C: ${predicate_selected}(C)}.

@@ -14,7 +14,8 @@ MAX_MODELS = 100
 CUSTOM_OUT = False
 MAX_ITER = 100
 
-SELECTED_PRED = 'selected'
+SELECTED_PRED = '${predicate_selected}'
+HOLDS_PRED = '${predicate_holds}'
 
 
 def step_atom(n: int) -> 'clingo.Symbol':
@@ -70,15 +71,15 @@ def main(ctl: 'clingo.Control'):
                     holds = []
                     constraint = []
                     for s in m.symbols(atoms=True):
-                        if s.name == 'selected':
+                        if s.name == SELECTED_PRED:
                             selected.append(s.arguments[0])
-                        elif s.name == 'holds':
+                        elif s.name == HOLDS_PRED:
                             holds.append(s.arguments[0])
                             constraint.append(s)
                     print('Answer({}) {}: {} {}'.format(t, mcount, sorted(selected), sorted(holds)))
                     no_goods.append(constraint)
                 else:
-                    no_goods.append([s for s in m.symbols(atoms=True) if s.name == 'holds'])
+                    no_goods.append([s for s in m.symbols(atoms=True) if s.name == HOLDS_PRED])
 
     if CUSTOM_OUT:
         print(json.dumps(ctl.statistics['summary'], indent=2))
@@ -92,9 +93,9 @@ def main(ctl: 'clingo.Control'):
 %   see the Clingo guide Section 10.3: Computing Subset Minimal Answer Sets with Heuristics
 %   to get more models use the `--enum-mod=domRec` option with `-n`
 %   and `--quiet=1` to avoid printing of tentative models
-#heuristic selected(C) : constraint(C). [1@1,false]
+#heuristic ${predicate_selected}(C) : ${predicate_constraint}(C). [1@1,false]
 
 #program step_prog(t).
 #external step(t).
-:- step(t), #count { C : holds(C) } > t.
-:- step(t), #count { C : holds(C) } < t.
+:- step(t), #count { C : ${predicate_holds}(C) } > t.
+:- step(t), #count { C : ${predicate_holds}(C) } < t.
