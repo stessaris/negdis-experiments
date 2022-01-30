@@ -1,0 +1,10 @@
+Absence(a):[^a]*
+Absence2(a):[^a]*(a)?[^a]*
+Absence3(a):[^a]*((a)?[^a]*){2}
+AlternatePrecedence(a,b):[^b]*(a[^b]*b[^b]*)*[^b]*
+Condition(a,b):[^b]*(a.*b)*[^b]*
+Existence(a):.*a.*
+NotSuccession(a,b):[^a]*(a[^b]*)*[^ab]*
+Response(a,b):[^a]*(a.*b)*[^a]*
+ConjunctiveResponse(a,b,c):([^a]*|[^b]*)(((a.*b)|(b.*a)).*c)*([^a]*|[^b]*)
+DisjunctiveResponse(a,b,c):[^a]*(a.*[bc])*[^a]*

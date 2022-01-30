@@ -15,9 +15,7 @@ import re
 import shlex
 import subprocess
 import sys
-import tempfile
-from tkinter.messagebox import NO
-from typing import Any, Callable, Dict, Iterable, Sequence, Set, Tuple, TextIO, Union
+from typing import Callable, Dict, Iterable, Sequence, Set, Tuple, TextIO, Union
 
 from . import templates as tmpl
 from .templates import SolverConf
@@ -480,5 +478,9 @@ def main(cargs) -> int:
     return args.func(args)
 
 
-if __name__ == "__main__":
+def cli():
     sys.exit(main(sys.argv[1:]))
+
+
+if __name__ == "__main__":
+    cli()

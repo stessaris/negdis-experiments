@@ -1,9 +1,10 @@
 """Helper functions for negdis file manipulation and reporting using Jupyter
 """
 
-__version__ = '2.0'
+__version__ = '2.1'
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
+import importlib.resources
 from io import StringIO, TextIOBase
 import itertools
 import json
@@ -21,11 +22,7 @@ import tempfile
 from typing import Dict, Generator, Iterable, Sequence, TextIO, Tuple, Union
 import xml.etree.ElementTree as ET
 
-from negdis.templates import SolverConf
-
 from . import aspdeclare
-
-NEGDIS_DIST = Path(__file__).parent.parent.joinpath('dist').resolve()
 
 def version() -> str:
     return '{} {}'.format(os.path.basename(__file__), __version__)
@@ -100,7 +97,7 @@ def as_file(content: Union[str, TextIOBase], suffix: str = None) -> Generator[Pa
     try:
         yield fpath
     finally:
-        fpath.unlink(missing_ok=True)
+        fpath.unlink()
 
 
 def xes_size(pathname: str) -> int:
@@ -353,39 +350,45 @@ class Negdis():
 
     """Wrapper class for negdis executable."""
     def __init__(self, exe: os.PathLike = None, dist: os.PathLike = None):
-        self._negdis_exe = self._find_exe(exe, dist)
+        self._negdis_exe = self._find_exe(exe, dist) if exe or dist else None
 
     @staticmethod
     def _find_exe(exe: os.PathLike, dist: os.PathLike) -> str:
-        negdis_name = 'negdis'
-        negdiscmd = shutil.which(exe) if exe else None
-        if negdiscmd is not None:
-            return negdiscmd
-        if dist is not None:
-            try:
-                platform = next(x for x in ('linux', 'darwin', 'win32') if sys.platform.startswith(x))
-                if platform in ('linux', 'darwin'):
-                    negdispath = Path(dist).joinpath(platform, negdis_name)
-                    if negdispath.is_file():
-                        if not os.access(negdispath, os.X_OK):
-                            negdispath.chmod(stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-                        return str(negdispath)
-                elif platform == 'win32':
-                    negdispath = Path(dist).joinpath(platform, f'{negdis_name}.exe')
-                    if negdispath.is_file():
-                        return str(negdispath)
-            except StopIteration:
-                logging.error(f'Unsupported platform {sys.platform}')
-        return shutil.which(negdis_name)
+        negdis_name = 'negdis' + '' if os.name == 'posix' else '.exe'
+        platform = next((x for x in ('linux', 'darwin', 'win32') if sys.platform.startswith(x)), None)
+        if exe is not None:
+            return shutil.which(exe) or exe
+        elif dist is not None:
+            return str(Path(dist).joinpath(platform, negdis_name))
+
+    @staticmethod
+    def _pkg_negdis():
+        negdis_name = 'negdis' + '' if os.name == 'posix' else '.exe'
+        platform = next((x for x in ('linux', 'darwin', 'win32') if sys.platform.startswith(x)), None)
+        pkg_name = 'negdis.bin.' + platform
+        return importlib.resources.path(pkg_name, negdis_name).__enter__()
+
+    def exec(self, *args: str, **kwargs) -> CompletedProcess:
+        with ExitStack() as stack:
+            negdis_exe = stack.enter_context(self._pkg_negdis()) if self._negdis_exe is None else self._negdis_exe
+            # make sure is executable
+            if os.name == 'posix' and os.path.isfile(negdis_exe) and not os.access(negdis_exe, os.X_OK):
+                os.chmod(negdis_exe, stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+            cmd = [negdis_exe] + [str(a) for a in args]
+            logging.info('Running: ' + ' '.join(shlex.quote(str(a)) for a in cmd))
+            return run(cmd, **kwargs)
 
     def run(self, *args: str, timeit: bool=False, **kwargs) -> CompletedProcess:
-        if self._negdis_exe is None:
-            raise RuntimeError('Missing negdis executable')
-        timecmd = [shutil.which('time'), '-p'] if timeit and sys.platform != 'win32' and shutil.which('time') else []
-        cmd = [self._negdis_exe] + [str(a) for a in args]
-        logging.info('Running: ' + ' '.join(shlex.quote(str(a)) for a in cmd))
-        cp = run(timecmd + cmd, capture_output=True, text=True, **kwargs)
-        return cp
+        with ExitStack() as stack:
+            negdis_exe = stack.enter_context(self._pkg_negdis()) if self._negdis_exe is None else self._negdis_exe
+            # make sure is executable
+            if os.name == 'posix' and os.path.isfile(negdis_exe) and not os.access(negdis_exe, os.X_OK):
+                os.chmod(negdis_exe, stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+            timecmd = [shutil.which('time'), '-p'] if timeit and sys.platform != 'win32' and shutil.which('time') else []
+            cmd = [negdis_exe] + [str(a) for a in args]
+            logging.info('Running: ' + ' '.join(shlex.quote(str(a)) for a in cmd))
+            cp = run(timecmd + cmd, capture_output=True, text=True, **kwargs)
+            return cp
 
     def _run_to_file(self, cmd: Sequence[str], args: Sequence[str], out: Union[os.PathLike, TextIO], timeit: bool=False, **kwargs) -> CompletedProcess:
         out_path = tmpfname(suffix='.json') if isinstance(out, TextIO) else out
@@ -438,7 +441,7 @@ class Negdis():
 
     @classmethod
     def default(cls) -> 'Negdis':
-        return cls._DEFAULT_RUNNER if cls._DEFAULT_RUNNER else cls.set_default(dist=NEGDIS_DIST)
+        return cls._DEFAULT_RUNNER if cls._DEFAULT_RUNNER else cls.set_default()
 
 
 def run_negdis(*args: str, negdis=None, dist=None, timeit=True, outf: TextIO = None, **kwargs) -> str:
@@ -451,3 +454,8 @@ def run_negdis(*args: str, negdis=None, dist=None, timeit=True, outf: TextIO = N
 
     print(cp.stdout, file=outf)
     return 'Running: ' + ' '.join(shlex.quote(str(a)) for a in cp.args) + '\n' + cp.stderr
+
+
+def cli() -> int:
+    cp = Negdis().exec(*sys.argv[1:])
+    return cp.returncode
