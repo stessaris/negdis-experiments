@@ -1,0 +1,36 @@
+[
+  {
+     "id": "guess", "inputs": ["guess.lp"], "args": [], "docstring": "" 
+  },
+  {
+     "id": "maxclosure", 
+     "inputs": ["count_closure.py.lp"],
+     "args": ["--outf=3", "--warn", "no-atom-undefined"],
+     "docstring": "Generates the deductive closure of all the constraints" 
+  },
+  {
+     "id": "plain", 
+     "inputs": ["guess.lp", "main_plain.py.lp"],
+     "args": ["--warn", "no-atom-undefined"],
+     "docstring": "No optimisation" 
+  },
+  {
+     "id": "subsetclos", 
+     "inputs": ["guess.lp", "main_iter.py.lp"],
+     "args": ["--warn", "no-atom-undefined"],
+     "docstring": "Minimal cardinality wrt the closure, and selected constraints for ties" 
+  },
+  {
+     "id": "minclos", 
+     "inputs": ["guess.lp", "main_countclos.py.lp"],
+     "args": ["--warn", "no-atom-undefined", "--quiet=1"],
+     "docstring": "Minimal cardinality wrt the closure constraints, and selected constraints for ties" 
+  },
+  {
+   "id": "subsetclos_asprin", 
+   "inputs": ["guess.lp", "subsetclos_asprin.lp"],
+   "args": [],
+   "solver": "asprin",
+   "docstring": "Minimal cardinality wrt the closure, and selected constraints for ties" 
+  }
+]

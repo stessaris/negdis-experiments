@@ -1,26 +1,16 @@
 % Select a subset of constraints from the choices in order to eliminate every trace
 
 % Input predicates:
-%   choice/2(trace_id, declare_constraint): associate possible choices to each trace
-%   action/1(action): actions participating in constraints
+%   ${predicate_choice}(trace_id, declare_constraint): associate possible choices to each trace
+%   ${predicate_action}(action): actions participating in constraints
 %
 % Output predicate
-%   selected/1(declare_constraint): the set of selected constraints
-
-% trace/1 holds all the trace ids
-trace(T) :- choice(T, _).
-
-% constraint/1 holds all the constraints
-constraint(C) :- choice(_, C).
+%   ${predicate_selected}(declare_constraint): the set of selected constraints
+%   ${predicate_holds}(declare_constraint): the set of selected constraints derived from the selected
 
 % select a subset of the choices
-{ selected(C) : choice(_, C) }.
+{ ${predicate_selected}(C) : ${predicate_choice}(_, C) }.
 
-holds(C) :- selected(C).
-
-% each trace must violate at least one of the constraints
-violated(T) :- choice(T, C), holds(C).
-:- trace(T), not violated(T).
-
-#show selected/1.
-#show holds/1.
+% each trace must be rejected by at least one of the holding constraints
+rejected(T) :- ${predicate_choice}(T, C), ${predicate_holds}(C).
+:- ${predicate_choice}(T, _), not rejected(T).

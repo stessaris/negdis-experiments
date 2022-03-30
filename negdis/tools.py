@@ -1,26 +1,26 @@
 """Helper functions for negdis file manipulation and reporting using Jupyter
 """
 
-__version__ = '1.1'
-
-import io
+from contextlib import contextmanager, ExitStack
+import importlib.resources
+from io import StringIO, TextIOBase
 import itertools
 import json
 import logging
 from operator import itemgetter
 import os
 from pathlib import Path
+import shlex
 import shutil
+import stat
 import statistics as stats
-from subprocess import CalledProcessError, check_output, run
+from subprocess import CalledProcessError, CompletedProcess, check_output, run
 import sys
 import tempfile
-from typing import Dict, Iterable, Tuple
+from typing import Any, Dict, Generator, Iterable, Sequence, TextIO, Tuple, Union
 import xml.etree.ElementTree as ET
 
-from . import aspdeclare
-
-NEGDIS_DIST = Path(__file__).parent.parent.joinpath('dist').resolve()
+from . import aspdeclare, __version__
 
 def version() -> str:
     return '{} {}'.format(os.path.basename(__file__), __version__)
@@ -51,6 +51,53 @@ def tmpfname(suffix: str = None) -> str:
     return fname
 
 
+@contextmanager
+def ensure_file(in_f: Union[os.PathLike, TextIOBase], suffix: str = None) -> Generator[Path, None, None]:
+    fpath = None
+    if isinstance(in_f, TextIOBase):
+        fpath = Path(tmpfname(suffix=suffix))
+        with fpath.open('w') as fd:
+            shutil.copyfileobj(in_f, fd)
+    try:
+        yield fpath if fpath is not None else Path(in_f)
+    finally:
+        if fpath is not None:
+            fpath.unlink()
+
+
+@contextmanager
+def ensure_fd(in_f: Union[os.PathLike, TextIOBase], mode: str = 'r') -> Generator[TextIOBase, None, None]:
+    fd = None if isinstance(in_f, TextIOBase) else open(in_f, mode=mode)
+    try:
+        yield in_f if fd is None else fd
+    finally:
+        if fd is not None:
+            fd.close()
+
+
+@contextmanager
+def as_file(content: Union[str, TextIOBase], suffix: str = None) -> Generator[Path, None, None]:
+    """Context that makes sure that the content is available as a temporary named file, which is deleted upon exiting.
+
+    Args:
+        content (Union[str, TextIOBase]): content or readable file
+        suffix (str, optional): suffix to be appended to the temporary file name. Defaults to None.
+
+    Yields:
+        Generator[Path, None, None]: [description]
+    """
+    fpath = Path(tmpfname(suffix=suffix))
+    with fpath.open('w') as fd:
+        if isinstance(content, TextIOBase):
+            shutil.copyfileobj(content, fd)
+        else:
+            fd.write(content)
+    try:
+        yield fpath
+    finally:
+        fpath.unlink()
+
+
 def xes_size(pathname: str) -> int:
     if sys.platform != 'win32' and shutil.which('xmllint'):
         # use xmllint tool
@@ -60,7 +107,10 @@ def xes_size(pathname: str) -> int:
         return sum(1 for ev, el in ET.iterparse(pathname) if el.tag == '{http://www.xes-standard.org/}trace')
 
 
-def merge_xes(files, out=sys.stdout):
+def merge_xes(files, out: TextIO = None):
+    if out is None:
+        out = sys.stdout
+
     def append_traces(xes_doc: ET, *more_docs: ET):
         log_node = xes_doc.getroot()
         for xe in more_docs:
@@ -78,46 +128,47 @@ def merge_xes(files, out=sys.stdout):
     first_et.write(out, encoding='UTF-8', xml_declaration=True)
 
 
-def count_choices(fn, top=10):
+def count_choices(fn: Union[os.PathLike, TextIOBase], top=10):
     c_count = {}
-    with open(fn) as fp:
+    c_count_unique = {}
+    unique_traces = set()
+    no_choice = 0
+    no_choice_unique = 0
+    with ensure_fd(fn) as fp:
         c_data = json.load(fp)
-        for choices in [t.get('choices', []) for t in c_data]:
+        for t_info in c_data:
+            trace_str = ''.join(t_info.get('trace', []))
+            choices = t_info.get('choices', [])
+            if len(choices) < 1:
+                no_choice += 1
+                if trace_str not in unique_traces:
+                    no_choice_unique += 1
             for c in choices:
                 c_count[c] = c_count.get(c, 0) + 1
+                if trace_str not in unique_traces:
+                    c_count_unique[c] = c_count_unique.get(c, 0) + 1
+            unique_traces.add(trace_str)
 
+    print(f'Traces without choices: {no_choice}/{len(c_data)} ({int(100 * no_choice / len(c_data))}%), w/o duplicates: {no_choice_unique}/{len(unique_traces)} ({int(100 * no_choice / len(unique_traces))}%)')
+    print('With duplicates:')
+    total = len(c_data)
     for k, v in itertools.islice(sorted(c_count.items(), key=itemgetter(1), reverse=True), top):
-        print('{}: {} ({}%)'.format(k, v, int(100 * v / len(c_data))))
+        print(f' {k}: {v}/{total} ({int(100 * v / total)}%)')
+    print('Without duplicates:')
+    total = len(unique_traces)
+    for k, v in itertools.islice(sorted(c_count_unique.items(), key=itemgetter(1), reverse=True), top):
+        print(f' {k}: {v}/{total} ({int(100 * v / total)}%)')
 
 
-def run_negdis(*args: str, negdis='negdis', dist=NEGDIS_DIST, timeit=True, outf=sys.stdout, **kwargs):
-    negdiscmd = shutil.which(negdis)
-    if negdiscmd is None and dist is not None:
-        if sys.platform.startswith('linux'):
-            negdiscmd = Path(dist).joinpath('linux', 'negdis')
-        elif sys.platform.startswith('darwin'):
-            negdiscmd = Path(dist).joinpath('darwin', 'negdis')
-        elif sys.platform.startswith('win32'):
-            negdiscmd = Path(dist).joinpath('win32', 'negdis.exe')
-    if negdiscmd is None:
-        return 'Negdis command {} not found'.format(negdis)
-    timecmd = [shutil.which('time'), '-p'] if timeit and sys.platform != 'win32' and shutil.which('time') else []
-    cmd = [str(negdiscmd)] + [str(a) for a in args]
-    cp = run(timecmd + cmd, capture_output=True, text=True, **kwargs)
-    if outf is not None:
-        print(cp.stdout, file=outf)
-        return 'Running: ' + ' '.join(cmd) + '\n' + cp.stderr
-    else:
-        return cp
-
-
-def count_sat(constraints: Iterable[str], logfile: os.PathLike, templates: os.PathLike, nosize: bool = False, dist=NEGDIS_DIST) -> Tuple[int, int]:
+def count_sat(constraints: Iterable[str], logfile: Union[os.PathLike, TextIOBase], templates: Union[os.PathLike, TextIOBase], nosize: bool = False, negdis: 'Negdis' = None) -> Tuple[int, int]:
     """
     Return the number of traces in the logfile satisfying all the constraints, and the size of the log.
     """
+    if negdis is None:
+        negdis = Negdis.default()
     logsize = None if nosize else xes_size(logfile)
 
-    cp = run_negdis('check', 'constraints', '-t', templates, logfile, dist=dist, timeit=False, outf=None, input='\n'.join(constraints))
+    cp = negdis.check(logfile, StringIO(initial_value='\n'.join(constraints)), templates, timeit=False)
 
     logging.debug(cp.stdout)
 
@@ -128,7 +179,7 @@ def count_sat(constraints: Iterable[str], logfile: os.PathLike, templates: os.Pa
     return (sum(sat_traces), logsize)
 
 
-def fitness(constraints: Iterable[str], positive_log: os.PathLike, negative_log: os.PathLike, templates: os.PathLike, dist=NEGDIS_DIST) -> Tuple[float, int, int, int]:
+def fitness(constraints: Iterable[str], positive_log: os.PathLike, negative_log: os.PathLike, templates: os.PathLike, negdis: 'Negdis' = None) -> Tuple[float, int, int, int]:
     """
     Calculate the fitness of the constraints wrt the validation logs. Returns None if the value cannot be calculated.
     """
@@ -138,11 +189,11 @@ def fitness(constraints: Iterable[str], positive_log: os.PathLike, negative_log:
     ntotal = 0
 
     if positive_log is not None and templates is not None:
-        sat, count = count_sat(constraints, positive_log, templates, nosize=False, dist=dist)
+        sat, count = count_sat(constraints, positive_log, templates, nosize=False, negdis=negdis)
         pcorrect = sat
         ptotal = count
     if negative_log is not None and templates is not None:
-        sat, count = count_sat(constraints, negative_log, templates, nosize=False, dist=dist)
+        sat, count = count_sat(constraints, negative_log, templates, nosize=False, negdis=negdis)
         ncorrect = count - sat
         ntotal = count
 
@@ -152,92 +203,113 @@ def fitness(constraints: Iterable[str], positive_log: os.PathLike, negative_log:
     return (f_value, pcorrect, ncorrect, ptotal, ntotal)
 
 
-def optimise_choices(choices: os.PathLike, opt_mode: str, rules: os.PathLike, timeout: int = None, models: int = 20, val_pos: os.PathLike = None, val_neg: os.PathLike = None, templates: os.PathLike = None, dist: os.PathLike = NEGDIS_DIST, outdir: os.PathLike = None, report_fp: io.TextIOBase = sys.stdout):
+def asp_program(choices: Union[os.PathLike, TextIOBase], opt_mode: Union[str, aspdeclare.SolverConf], rules: Union[os.PathLike, TextIOBase], mapping: Dict[str, Any] = dict()) -> str:
+    sol_conf = aspdeclare.solver_configuration(opt_mode)
+    with ensure_fd(choices) as choices_fd, ensure_fd(rules) as rules_fd:
+        with StringIO() as asp_if:
+            aspdeclare.asp_problem(choices_fd, rules=rules_fd, positives=None, main=sol_conf.program(eval=False), outf=asp_if)
+
+            return aspdeclare.evaluate_template(asp_if.getvalue(), mapping={**dict(sol_conf.mapping), **mapping})
+
+
+def optimise_choices(choices: Union[os.PathLike, TextIOBase], opt_mode: Union[str, aspdeclare.SolverConf], rules: Union[os.PathLike, TextIOBase], data_id: str = None, timeout: int = None, models: int = 20, val_pos: os.PathLike = None, val_neg: os.PathLike = None, templates: os.PathLike = None, dist: os.PathLike = None, outdir: os.PathLike = None, results_path: os.PathLike = None, report_fp: TextIO = None, negdis: 'Negdis' = None, mapping: Dict[str, str] = None):
     """Optimise the choices files.
-
-    Args:
-        choices (os.PathLike): [description]
-        opt_mode (str): [description]
-        rules (os.PathLike): [description]
-        timeout (int, optional): [description]. Defaults to None.
-        models (int, optional): [description]. Defaults to 20.
-        val_pos (os.PathLike, optional): [description]. Defaults to None.
-        val_neg (os.PathLike, optional): [description]. Defaults to None.
-        templates (os.PathLike, optional): [description]. Defaults to None.
-        dist (os.PathLike, optional): [description]. Defaults to NEGDIS_DIST.
-        outdir (os.PathLike, optional): [description]. Defaults to None.
-        report_fp (io.TextIOBase, optional): [description]. Defaults to sys.stdout.
     """
+    if report_fp is None:
+        report_fp = sys.stdout
+    if negdis is None:
+        negdis = Negdis(dist=dist) if dist else Negdis.default()
+
 
     def _say(txt):
-        if report_fp is not None:
-            print(txt, file=report_fp)
+        print(txt, file=report_fp)
 
-    cf = Path(choices)
-    od_path = cf.parent if outdir is None else Path(outdir)
-    of = od_path.joinpath(cf.stem + f'_opt_{opt_mode}.json')
+    if data_id is None:
+        if isinstance(choices, TextIOBase):
+            try:
+                data_id = Path(choices.name).stem
+            except Exception:
+                data_id = ''
+        else:
+            data_id = Path(choices).stem
 
-    cmd = ['run', '--out', str(of), '--defmain', opt_mode, '--models', str(models), '--json']
-    if rules is not None:
-        cmd += ['--rules', str(Path(rules).resolve())]
-    if timeout is not None:
-        cmd += ['--timeout', str(timeout)]
-    cmd.append(str(cf))
-
+    try:
+        opt_id = opt_mode.id
+    except AttributeError:
+        opt_id = str(opt_mode)
     _say('-' * 60)
-    _say('Optimising {} using {} -> {}'.format(cf, opt_mode, of))
+    _say('Optimising {} using {}'.format(choices, opt_id))
     _say('-' * 20)
-    _say('aspdeclare command: {}'.format(' '.join(cmd)))
-    aspdeclare.main(cmd)
+    with ensure_fd(choices) as choices_fd, ensure_fd(rules) as rules_fd:
+        positives_fd = None
+        results = aspdeclare.optimise(opt_mode, choices_fd, rules_fd, positives=positives_fd, data_id=data_id, models=models, timeout=timeout, mapping=mapping)
 
-    if report_fp is not None:
-        optimisation_stats(of, val_pos, val_neg, templates, dist=dist, outf=report_fp, print_models=10)
+    if outdir or results_path:
+        if results_path is None:
+            results_path = Path(outdir, f'{data_id}_opt_{opt_id}.json')
+        logging.info(f'writing optimisation results to {results_path}')
+        with open(results_path, 'w') as out_fd:
+            json.dump(results, out_fd, ensure_ascii=False)
+
+    if 'selected' in results:
+        optimisation_stats(results, val_pos, val_neg, templates, outf=report_fp, print_models=10, negdis=negdis)
+    else:
+        clingo_results = results['clingo']
+        if clingo_results.get('timeout', False):
+            print('solver command {} timed out after {} seconds'.format(clingo_results['cmd'], clingo_results['timeout']))
+        report_fp.write(clingo_results['stdout'])
 
 
-def optimisation_stats(report: os.PathLike, plog: os.PathLike, nlog: os.PathLike, templates: os.PathLike, dist: os.PathLike = NEGDIS_DIST, outf: io.TextIOBase = sys.stdout, print_models: int = 10) -> Dict:
-    """
-    docstring
-    """
+def optimisation_stats(report: Union[Dict, os.PathLike, TextIOBase], plog: os.PathLike, nlog: os.PathLike, templates: os.PathLike, dist: os.PathLike = None, outf: TextIO = None, print_models: int = 10, negdis: 'Negdis' = None) -> Dict:
+
+    if outf is None:
+        outf = sys.stdout
+
+    if negdis is None:
+        negdis = Negdis(dist=dist) if dist else Negdis.default()
+
     def _say(txt):
-        if outf is not None:
-            print(txt, file=outf)
+        print(txt, file=outf)
 
-    with open(report) as fp:
-        result = json.load(fp)
-        models = result.get('selected', [])
-        clingo_out = result.get('clingo', {})
+    if isinstance(report, Dict):
+        results = report
+    else:
+        logging.info(f'Stats: reading optimisation results from {report}')
+        with ensure_fd(report) as fd:
+            results = json.load(fd)
 
-        calls = len(clingo_out.get('Call', []))
-        last_cpu = clingo_out.get('Time', {}).get('CPU', 0.0)
-        more_models = clingo_out.get('Models', {}).get('More', 'no') == 'yes'
+    models = results.get('selected', [])
+    clingo_out = results.get('clingo', {})
+
+    calls = len(clingo_out.get('Call', []))
+    last_cpu = clingo_out.get('Time', {}).get('CPU', 0.0)
+    more_models = clingo_out.get('Models', {}).get('More', 'no') == 'yes'
+
+    if print_models > 0:
+        _say('-' * 20)
+        _say('Models (only first {}/{}):'.format(print_models, len(models)))
+
+
+    f_values = []
+    msizes = []
+    for constraints in sorted(models, key=len):
+        f_value, pcorrect, ncorrect, psize, nsize = fitness(constraints, plog, nlog, templates, negdis=negdis)
+        if isinstance(f_value, float):
+            f_values.append(f_value)
+        msizes.append(len(constraints))
 
         if print_models > 0:
-            _say('-' * 20)
-            _say('Models (only first {}/{}):'.format(print_models, len(models)))
+            _say(', '.join(sorted(constraints)))
+            if psize > 0:
+                _say('Positive satisfying: {}/{}'.format(pcorrect, psize))
+            if nsize > 0:
+                _say('Negative unsatisfied: {}/{}'.format(ncorrect, nsize))
+            if f_value is not None:
+                _say('Fitness: {}'.format(f_value))
+            print_models += -1
 
-
-        f_values = []
-        msizes = []
-        for constraints in sorted(models, key=len):
-            f_value, pcorrect, ncorrect, psize, nsize = fitness(constraints, plog, nlog, templates, dist=dist)
-            if isinstance(f_value, float):
-                f_values.append(f_value)
-            msizes.append(len(constraints))
-
-            if print_models > 0:
-                _say(', '.join(sorted(constraints)))
-                if psize > 0:
-                    _say('Positive satisfying: {}/{}'.format(pcorrect, psize))
-                if nsize > 0:
-                    _say('Negative unsatisfied: {}/{}'.format(ncorrect, nsize))
-                if f_value is not None:
-                    _say('Fitness: {}'.format(f_value))
-                print_models += -1
-
-    report_id = os.path.splitext(os.path.basename(report))[0]
     rep_stats = {
-        'id': report_id,
-        'fname': os.path.realpath(report),
+        'id': results.get('id', 'unknown'),
         'models': len(msizes),
         'min': min(msizes) if len(msizes) > 0 else None,
         'max': max(msizes) if len(msizes) > 0 else None,
@@ -253,7 +325,9 @@ def optimisation_stats(report: os.PathLike, plog: os.PathLike, nlog: os.PathLike
     return rep_stats
 
 
-def show_hwinfo(outf=sys.stdout):
+def show_hwinfo(outf: TextIO = None):
+    if outf is None:
+        outf = sys.stdout
     try:
         if sys.platform.startswith('linux'):
             out = check_output('lscpu; lsmem', shell=True, text=True)
@@ -266,3 +340,115 @@ def show_hwinfo(outf=sys.stdout):
         print(out, file=outf)
     except CalledProcessError as e:
         print("Can't get HW info: {}".format(e))
+
+
+class Negdis():
+
+    _DEFAULT_RUNNER: 'Negdis' = None
+
+    """Wrapper class for negdis executable."""
+    def __init__(self, exe: os.PathLike = None, dist: os.PathLike = None):
+        self._negdis_exe = self._find_exe(exe, dist) if exe or dist else None
+
+    @staticmethod
+    def _find_exe(exe: os.PathLike, dist: os.PathLike) -> str:
+        negdis_name = 'negdis' + ('' if os.name == 'posix' else '.exe')
+        platform = next((x for x in ('linux', 'darwin', 'win32') if sys.platform.startswith(x)), None)
+        if exe is not None:
+            return shutil.which(exe) or exe
+        elif dist is not None:
+            return str(Path(dist).joinpath(platform, negdis_name))
+
+    @staticmethod
+    def _pkg_negdis():
+        negdis_name = 'negdis' + ('' if os.name == 'posix' else '.exe')
+        platform = next((x for x in ('linux', 'darwin', 'win32') if sys.platform.startswith(x)), None)
+        pkg_name = 'negdis.bin.' + platform
+        return importlib.resources.path(pkg_name, negdis_name).__enter__()
+
+    def exec(self, *args: str, **kwargs) -> CompletedProcess:
+        with ExitStack() as stack:
+            negdis_exe = stack.enter_context(self._pkg_negdis()) if self._negdis_exe is None else self._negdis_exe
+            # make sure is executable
+            if os.name == 'posix' and os.path.isfile(negdis_exe) and not os.access(negdis_exe, os.X_OK):
+                os.chmod(negdis_exe, stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+            cmd = [str(negdis_exe)] + [str(a) for a in args]
+            logging.info('Running: ' + ' '.join(shlex.quote(str(a)) for a in cmd))
+            return run(cmd, **kwargs)
+
+    def run(self, *args: str, timeit: bool=False, **kwargs) -> CompletedProcess:
+        with ExitStack() as stack:
+            negdis_exe = stack.enter_context(self._pkg_negdis()) if self._negdis_exe is None else self._negdis_exe
+            # make sure is executable
+            if os.name == 'posix' and os.path.isfile(negdis_exe) and not os.access(negdis_exe, os.X_OK):
+                os.chmod(negdis_exe, stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+            timecmd = [shutil.which('time'), '-p'] if timeit and sys.platform != 'win32' and shutil.which('time') else []
+            cmd = [str(negdis_exe)] + [str(a) for a in args]
+            logging.info('Running: ' + ' '.join(shlex.quote(str(a)) for a in cmd))
+            cp = run(timecmd + cmd, capture_output=True, text=True, **kwargs)
+            return cp
+
+    def _run_to_file(self, cmd: Sequence[str], args: Sequence[str], out: Union[os.PathLike, TextIO], timeit: bool=False, **kwargs) -> CompletedProcess:
+        out_path = tmpfname(suffix='.json') if isinstance(out, TextIO) else out
+
+        cmd_line = cmd + (['--out', str(out_path)] if out_path is not None else []) + args
+        cp = self.run(*cmd_line, timeit=timeit, **kwargs)
+
+        if isinstance(out, TextIO):
+            with open(out_path) as fd:
+                shutil.copyfileobj(fd, out)
+            os.unlink(out_path)
+
+        return cp
+
+    def version(self) -> str:
+        cp = self.run('version')
+        return cp.stdout
+
+    def discover(self, pos_logs: Union[os.PathLike, TextIO], neg_logs: Union[os.PathLike, TextIO], templates: Union[os.PathLike, TextIO], outf: Union[os.PathLike, TextIO] = None, fmt: str = 'xes', timeit: bool=False, **kwargs) -> CompletedProcess:
+
+        with ensure_file(pos_logs) as pos_path, ensure_file(neg_logs) as neg_path, ensure_file(templates) as templ_path:
+            cp = self._run_to_file(
+                ['discover', 'negative'], ['--templ', templ_path, '--fmt', fmt, pos_path, neg_path],
+                outf, timeit=timeit, **kwargs)
+
+        return cp
+
+    def compatible(self, pos_logs: Union[os.PathLike, TextIO], constraints: Union[os.PathLike, TextIO], templates: Union[os.PathLike, TextIO], outf: Union[os.PathLike, TextIO] = None, fmt: str = 'xes', timeit: bool=False, **kwargs) -> CompletedProcess:
+
+        with ensure_file(pos_logs) as pos_path, ensure_file(templates) as templ_path:
+            cp = self._run_to_file(
+                ['discover', 'compatible'], ['--templ', templ_path, '--fmt', fmt, pos_path],
+                outf, timeit=timeit, **kwargs)
+
+        return cp
+
+    def check(self, pos_logs: Union[os.PathLike, TextIO], constraints: Union[os.PathLike, TextIO], templates: Union[os.PathLike, TextIO], outf: Union[os.PathLike, TextIO] = None, fmt: str = 'xes', timeit: bool=False, **kwargs) -> CompletedProcess:
+
+        with ensure_file(pos_logs) as pos_path, ensure_file(constraints) as constr_path, ensure_file(templates) as templ_path:
+            cp = self._run_to_file(
+                ['check', 'constraints'], ['--templ', templ_path, '--fmt', fmt, pos_path, constr_path],
+                outf, timeit=timeit, **kwargs)
+
+        return cp
+
+    @classmethod
+    def set_default(cls, exe: os.PathLike = None, dist: os.PathLike = None) -> 'Negdis':
+        cls._DEFAULT_RUNNER = cls(exe=exe, dist=dist)
+        return cls._DEFAULT_RUNNER
+
+    @classmethod
+    def default(cls) -> 'Negdis':
+        return cls._DEFAULT_RUNNER if cls._DEFAULT_RUNNER else cls.set_default()
+
+
+def run_negdis(*args: str, negdis=None, dist=None, timeit=True, outf: TextIO = None, **kwargs) -> str:
+    if outf is None:
+        outf = sys.stdout
+
+    negdis_runner = Negdis(exe=negdis, dist=dist) if negdis or dist else Negdis.default()
+
+    cp = negdis_runner.run(*args, timeit=timeit, **kwargs)
+
+    print(cp.stdout, file=outf)
+    return 'Running: ' + ' '.join(shlex.quote(str(a)) for a in cp.args) + '\n' + cp.stderr
