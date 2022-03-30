@@ -1,6 +1,6 @@
 [
   {
-     "id": "guess", "inputs": ["guess.lp"], "args": ["--warn", "no-atom-undefined"], "docstring": "" 
+     "id": "guess", "inputs": ["guess.lp"], "args": [], "docstring": "" 
   },
   {
      "id": "maxclosure", 
@@ -25,5 +25,12 @@
      "inputs": ["guess.lp", "main_countclos.py.lp"],
      "args": ["--warn", "no-atom-undefined", "--quiet=1"],
      "docstring": "Minimal cardinality wrt the closure constraints, and selected constraints for ties" 
+  },
+  {
+   "id": "subsetclos_asprin", 
+   "inputs": ["guess.lp", "subsetclos_asprin.lp"],
+   "args": [],
+   "solver": "asprin",
+   "docstring": "Minimal cardinality wrt the closure, and selected constraints for ties" 
   }
 ]

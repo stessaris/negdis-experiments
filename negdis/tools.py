@@ -1,8 +1,6 @@
 """Helper functions for negdis file manipulation and reporting using Jupyter
 """
 
-__version__ = '2.1'
-
 from contextlib import contextmanager, ExitStack
 import importlib.resources
 from io import StringIO, TextIOBase
@@ -19,10 +17,10 @@ import statistics as stats
 from subprocess import CalledProcessError, CompletedProcess, check_output, run
 import sys
 import tempfile
-from typing import Dict, Generator, Iterable, Sequence, TextIO, Tuple, Union
+from typing import Any, Dict, Generator, Iterable, Sequence, TextIO, Tuple, Union
 import xml.etree.ElementTree as ET
 
-from . import aspdeclare
+from . import aspdeclare, __version__
 
 def version() -> str:
     return '{} {}'.format(os.path.basename(__file__), __version__)
@@ -205,13 +203,13 @@ def fitness(constraints: Iterable[str], positive_log: os.PathLike, negative_log:
     return (f_value, pcorrect, ncorrect, ptotal, ntotal)
 
 
-def asp_program(choices: Union[os.PathLike, TextIOBase], opt_mode: Union[str, aspdeclare.SolverConf], rules: Union[os.PathLike, TextIOBase], mapping: Dict[str, str] = None) -> str:
+def asp_program(choices: Union[os.PathLike, TextIOBase], opt_mode: Union[str, aspdeclare.SolverConf], rules: Union[os.PathLike, TextIOBase], mapping: Dict[str, Any] = dict()) -> str:
     sol_conf = aspdeclare.solver_configuration(opt_mode)
     with ensure_fd(choices) as choices_fd, ensure_fd(rules) as rules_fd:
         with StringIO() as asp_if:
-            aspdeclare.asp_problem(choices_fd, rules=rules_fd, positives=None, main=sol_conf.program(mapping), outf=asp_if)
+            aspdeclare.asp_problem(choices_fd, rules=rules_fd, positives=None, main=sol_conf.program(eval=False), outf=asp_if)
 
-            return asp_if.getvalue()
+            return aspdeclare.evaluate_template(asp_if.getvalue(), mapping={**dict(sol_conf.mapping), **mapping})
 
 
 def optimise_choices(choices: Union[os.PathLike, TextIOBase], opt_mode: Union[str, aspdeclare.SolverConf], rules: Union[os.PathLike, TextIOBase], data_id: str = None, timeout: int = None, models: int = 20, val_pos: os.PathLike = None, val_neg: os.PathLike = None, templates: os.PathLike = None, dist: os.PathLike = None, outdir: os.PathLike = None, results_path: os.PathLike = None, report_fp: TextIO = None, negdis: 'Negdis' = None, mapping: Dict[str, str] = None):
@@ -354,7 +352,7 @@ class Negdis():
 
     @staticmethod
     def _find_exe(exe: os.PathLike, dist: os.PathLike) -> str:
-        negdis_name = 'negdis' + '' if os.name == 'posix' else '.exe'
+        negdis_name = 'negdis' + ('' if os.name == 'posix' else '.exe')
         platform = next((x for x in ('linux', 'darwin', 'win32') if sys.platform.startswith(x)), None)
         if exe is not None:
             return shutil.which(exe) or exe
@@ -363,7 +361,7 @@ class Negdis():
 
     @staticmethod
     def _pkg_negdis():
-        negdis_name = 'negdis' + '' if os.name == 'posix' else '.exe'
+        negdis_name = 'negdis' + ('' if os.name == 'posix' else '.exe')
         platform = next((x for x in ('linux', 'darwin', 'win32') if sys.platform.startswith(x)), None)
         pkg_name = 'negdis.bin.' + platform
         return importlib.resources.path(pkg_name, negdis_name).__enter__()
@@ -374,7 +372,7 @@ class Negdis():
             # make sure is executable
             if os.name == 'posix' and os.path.isfile(negdis_exe) and not os.access(negdis_exe, os.X_OK):
                 os.chmod(negdis_exe, stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-            cmd = [negdis_exe] + [str(a) for a in args]
+            cmd = [str(negdis_exe)] + [str(a) for a in args]
             logging.info('Running: ' + ' '.join(shlex.quote(str(a)) for a in cmd))
             return run(cmd, **kwargs)
 
@@ -385,7 +383,7 @@ class Negdis():
             if os.name == 'posix' and os.path.isfile(negdis_exe) and not os.access(negdis_exe, os.X_OK):
                 os.chmod(negdis_exe, stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
             timecmd = [shutil.which('time'), '-p'] if timeit and sys.platform != 'win32' and shutil.which('time') else []
-            cmd = [negdis_exe] + [str(a) for a in args]
+            cmd = [str(negdis_exe)] + [str(a) for a in args]
             logging.info('Running: ' + ' '.join(shlex.quote(str(a)) for a in cmd))
             cp = run(timecmd + cmd, capture_output=True, text=True, **kwargs)
             return cp
@@ -454,8 +452,3 @@ def run_negdis(*args: str, negdis=None, dist=None, timeit=True, outf: TextIO = N
 
     print(cp.stdout, file=outf)
     return 'Running: ' + ' '.join(shlex.quote(str(a)) for a in cp.args) + '\n' + cp.stderr
-
-
-def cli() -> int:
-    cp = Negdis().exec(*sys.argv[1:])
-    return cp.returncode

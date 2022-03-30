@@ -1,6 +1,6 @@
 # Code and experiments for the paper "Process discovery on deviant traces and other stranger things"
 
-This repository include the data and the support code to run the experiments, as well as the code implementing the algorithm described in the paper (in the [dist](dist) directory, both compiled and source).
+This repository include the data and the support code to run the experiments, as well as the code implementing the algorithm described in the paper (in the [dist](dist) directory).
 
 ## Running the experiments
 
@@ -53,3 +53,18 @@ conda env update -n=base  -f=work/binder/environment.yml
 ```
 
 For details see [Jupyter Docker Stacks - Running a Container](https://jupyter-docker-stacks.readthedocs.io/en/latest/using/running.html). The `-v` option mounts the current directory on the virtual machine, so the results of the experiments will be stored on the local filesystem.
+
+## Available experiments
+
+Due to missing distribution rights for the *CERV* dataset, the files with the event logs might not be included in this repository. Please get in touch with the authors for more details.
+
+### ASPrin optimisation experiments
+
+- [run_asprin_cerv_experiments](run_asprin_cerv_experiments.ipynb): *CERV* dataset
+- [run_asprin_dreyers_experiments](run_asprin_dreyers_experiments.ipynb): [Dreyers dataset](https://github.com/tslaats/EventLogs)
+
+### Experiments presented in [Process discovery on deviant traces and other stranger things](https://doi.org/10.48550/arXiv.2109.14883)
+
+- [run_cerv_experiments](run_cerv_experiments.ipynb): *CERV* dataset
+- [run_reallife_experiments](run_reallife_experiments.ipynb)
+- [run_synt_experiments](run_synt_experiments.ipynb)

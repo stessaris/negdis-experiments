@@ -19,8 +19,13 @@ Defaults = {
     'predicate_holds': 'ndis_holds',
     'predicate_action': 'ndis_action',
     'predicate_choice': 'ndis_choice',
+    'predicate_fixed': 'ndis_fixed',
     'predicate_selected': 'ndis_selected',
-    'predicate_constraint': 'ndis_constraint'
+    'predicate_constraint': 'ndis_constraint',
+    'predicate_constraint_name': 'ndis_constr_name',
+    'predicate_constraint_action': 'ndis_constr_action',
+    'predicate_rule_head_pttrn': 'ndis_pttrn_in_head',
+    'functor_declare': 'decl'
 }
 
 @dataclass
@@ -32,9 +37,10 @@ class SolverConf():
     docstring: str
     solver: str = 'clingo'
     template: str = ''
+    mapping: Tuple[Tuple[str, str]] = tuple()
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], root: Path = None):
+    def from_dict(cls, data: Dict[str, Any], root: Path = None) -> 'SolverConf':
         if root is None:
             root = Path()
         def input_path(p: str) -> str:
@@ -46,12 +52,26 @@ class SolverConf():
 
         return cls(
             id=data.get('id', int(uuid.uuid4().hex[:6], base=16)),
-            inputs=[input_path(p) for p in data.get('inputs', [])],
-            args=[str(a) for a in data.get('args', [])],
+            inputs=tuple(input_path(p) for p in data.get('inputs', [])),
+            args=tuple(str(a) for a in data.get('args', [])),
             docstring=data.get('docstring', ''),
             solver=data.get('solver', 'clingo'),
-            template=data.get('template', '')
+            template=data.get('template', ''),
+            mapping=tuple(data.get('mapping', {}).items())
         )
+
+    @classmethod
+    def from_file(cls, fd: TextIOBase, root: Path = None) -> 'SolverConf':
+        if root is None:
+            try:
+                fd_dir = Path(fd.name).parent
+                if fd_dir.is_dir():
+                    root = fd_dir
+            except Exception:
+                pass
+
+        return cls.from_dict(json.load(fd), root=root)
+
 
     def program(self, mapping: Dict[str, str] = None, eval: bool = True) -> str:
         """Returns the ASP program by joining evaluating the template definition and the inputs.
@@ -74,7 +94,9 @@ class SolverConf():
                 return ''
 
         src_template = '\n'.join(templ_string(res) for res in self.inputs) + '\n' + self.template
-        return evaluate_template(src_template, mapping) if eval else src_template
+        if eval:
+            return evaluate_template(src_template, dict(self.mapping) if mapping is None else {**dict(self.mapping), **mapping})
+        return src_template
 
 
 def all_templates() -> Iterable[str]:
