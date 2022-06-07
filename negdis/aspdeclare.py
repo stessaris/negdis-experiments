@@ -51,7 +51,7 @@ class ASPenc():
     @classmethod
     def constraint(cls, name: str, actions: Iterable[str], quote: bool = True) -> str:
         if quote:
-            args = [cls.const(name.lower())] + [cls.const(a) for a in actions]
+            args = [cls.const(name)] + [cls.const(a) for a in actions]
         else:
             args = [name, *actions]
         return r'${functor_declare}(' + ','.join(args) + ')'
@@ -188,7 +188,7 @@ def read_declare_patterns(infile) -> Set[str]:
     for line in infile:
         m = re.match(r'\A\s*(?P<name>(\w|_|\s)+)\s*\([^)]*\)\s*:', line)
         if m:
-            decl_templates.add(m.group('name').lower())
+            decl_templates.add(m.group('name'))
     logging.info('Known templates: {}'.format(decl_templates))
     return decl_templates
 
@@ -377,8 +377,8 @@ def run_clingo(program: Union[str, TextIOBase], clingo: os.PathLike='clingo', mo
         return {
             'cmd': e.cmd,
             'timeout': e.timeout,
-            'stdout': e.stdout.decode(),
-            'stderr': e.stderr.decode()
+            'stdout': e.stdout.decode() if e.stdout is not None else '',
+            'stderr': e.stderr.decode() if e.stderr is not None else ''
         }
 
     try:

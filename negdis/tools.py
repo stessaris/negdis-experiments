@@ -128,6 +128,21 @@ def merge_xes(files, out: TextIO = None):
     first_et.write(out, encoding='UTF-8', xml_declaration=True)
 
 
+def all_choices(fn: Union[os.PathLike, TextIOBase], out: Union[os.PathLike, TextIOBase]=None):
+    """Takes a *Choices* file in `fn` and writes the (sorted) union of all constraints in `out`"""
+    if out is None:
+        out = sys.stdout
+
+    all_constraints = set()
+    with ensure_fd(fn) as fp:
+        for t_info in json.load(fp):
+            all_constraints.update(t_info.get('choices', []))
+
+    with ensure_fd(out, mode='w') as outf:
+        for c in sorted(all_constraints):
+            print(c, file=outf)
+    
+
 def count_choices(fn: Union[os.PathLike, TextIOBase], top=10):
     c_count = {}
     c_count_unique = {}
@@ -212,7 +227,7 @@ def asp_program(choices: Union[os.PathLike, TextIOBase], opt_mode: Union[str, as
             return aspdeclare.evaluate_template(asp_if.getvalue(), mapping={**dict(sol_conf.mapping), **mapping})
 
 
-def optimise_choices(choices: Union[os.PathLike, TextIOBase], opt_mode: Union[str, aspdeclare.SolverConf], rules: Union[os.PathLike, TextIOBase], data_id: str = None, timeout: int = None, models: int = 20, val_pos: os.PathLike = None, val_neg: os.PathLike = None, templates: os.PathLike = None, dist: os.PathLike = None, outdir: os.PathLike = None, results_path: os.PathLike = None, report_fp: TextIO = None, negdis: 'Negdis' = None, mapping: Dict[str, str] = None):
+def optimise_choices(choices: Union[os.PathLike, TextIOBase], opt_mode: Union[str, aspdeclare.SolverConf], rules: Union[os.PathLike, TextIOBase], data_id: str = None, timeout: int = None, models: int = 20, val_pos: os.PathLike = None, val_neg: os.PathLike = None, templates: os.PathLike = None, dist: os.PathLike = None, outdir: os.PathLike = None, results_path: os.PathLike = None, report_fp: TextIO = None, negdis: 'Negdis' = None, mapping: Dict[str, str] = dict()):
     """Optimise the choices files.
     """
     if report_fp is None:
@@ -414,7 +429,7 @@ class Negdis():
 
         return cp
 
-    def compatible(self, pos_logs: Union[os.PathLike, TextIO], constraints: Union[os.PathLike, TextIO], templates: Union[os.PathLike, TextIO], outf: Union[os.PathLike, TextIO] = None, fmt: str = 'xes', timeit: bool=False, **kwargs) -> CompletedProcess:
+    def compatible(self, pos_logs: Union[os.PathLike, TextIO], templates: Union[os.PathLike, TextIO], outf: Union[os.PathLike, TextIO] = None, fmt: str = 'xes', timeit: bool=False, constraints: Union[os.PathLike, TextIO]=None, **kwargs) -> CompletedProcess:
 
         with ensure_file(pos_logs) as pos_path, ensure_file(templates) as templ_path:
             cp = self._run_to_file(

@@ -18,7 +18,7 @@
      "id": "subsetclos", 
      "inputs": ["guess.lp", "main_iter.py.lp"],
      "args": ["--warn", "no-atom-undefined"],
-     "docstring": "Minimal cardinality wrt the closure, and selected constraints for ties" 
+     "docstring": "Subset minimal deductive closure" 
   },
   {
      "id": "minclos", 
@@ -29,8 +29,8 @@
   {
    "id": "subsetclos_asprin", 
    "inputs": ["guess.lp", "subsetclos_asprin.lp"],
-   "args": [],
+   "args": ["--quiet=1"],
    "solver": "asprin",
-   "docstring": "Minimal cardinality wrt the closure, and selected constraints for ties" 
+   "docstring": "Subset minimal deductive closure (using Asprin)" 
   }
 ]
